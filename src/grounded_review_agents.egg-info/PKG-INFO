@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: grounded-review-agents
+Version: 0.1.0
+Summary: Multi-agent scientific review generation with grounding verification
+Requires-Python: >=3.11
