@@ -1,9 +1,13 @@
 pyproject.toml
 src/grounded_review/__init__.py
+src/grounded_review/config.py
 src/grounded_review/agents/__init__.py
 src/grounded_review/api/__init__.py
 src/grounded_review/evaluation/__init__.py
 src/grounded_review/ingestion/__init__.py
+src/grounded_review/ingestion/arxiv_client.py
+src/grounded_review/ingestion/models.py
+src/grounded_review/ingestion/pdf_parser.py
 src/grounded_review/observability/__init__.py
 src/grounded_review/retrieval/__init__.py
 src/grounded_review/verification/__init__.py
