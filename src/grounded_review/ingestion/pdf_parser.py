@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf
 
 # Headings that mark the end of body content. Everything after the first
 # match is discarded — this is the reference-stripping step.
@@ -33,6 +33,18 @@ class PDFParseError(Exception):
     """Raised when a PDF yields no usable body text."""
 
 
+def _strip_numbering(text: str) -> str:
+    """Remove leading section numbering: '3.', '3.1', 'IV.', '(2)'.
+
+    Roman numerals are only stripped when followed by a separator, so that
+    'Introduction' does not lose its leading I, 'Conclusion' its C, and so on.
+    """
+    text = text.strip()
+    text = re.sub(r"^\(?\d+(?:\.\d+)*[\.\)]?\s+", "", text)
+    text = re.sub(r"^[IVXLC]+[\.\)]\s+", "", text)
+    return text.strip()
+
+
 def _looks_like_heading(line: str) -> bool:
     stripped = line.strip()
     if not (3 <= len(stripped) <= 60):
@@ -42,12 +54,12 @@ def _looks_like_heading(line: str) -> bool:
     if not SECTION_HEADING.match(stripped):
         return False
     # Either it matches a known section name, or it is numbered.
-    normalized = re.sub(r"^[\d\.\)IVXLC\s]+", "", stripped).strip().lower()
+    normalized = _strip_numbering(stripped).lower()
     return normalized in KNOWN_SECTIONS or bool(re.match(r"^\d", stripped))
 
 
 def _clean_line(line: str) -> str:
-    # Rejoin words hyphenated across a line break, collapse whitespace.
+    """Collapse whitespace on a single line."""
     return re.sub(r"\s+", " ", line).strip()
 
 
@@ -55,20 +67,19 @@ def extract_sections(pdf_path: Path) -> dict[str, str]:
     """Parse a paper PDF into {section_name: text}, dropping references
     and figure captions.
 
-    Returns at minimum a 'body' key if no sections could be identified.
+    Raises PDFParseError if the PDF yields no substantial body text.
     """
-    with fitz.open(pdf_path) as doc:
+    with pymupdf.open(pdf_path) as doc:
         raw = "\n".join(page.get_text("text") for page in doc)
 
     if not raw.strip():
         raise PDFParseError(f"No extractable text in {pdf_path} — likely a scanned PDF")
 
-    # Repair words split by end-of-line hyphenation before we split on newlines.
+    # Repair words split by end-of-line hyphenation before splitting on newlines.
     raw = re.sub(r"-\n(\w)", r"\1", raw)
 
-    sections: dict[str, list[str]] = {}
+    sections: dict[str, list[str]] = {"preamble": []}
     current = "preamble"
-    sections[current] = []
 
     for line in raw.split("\n"):
         if END_MARKERS.match(line):
@@ -76,7 +87,7 @@ def extract_sections(pdf_path: Path) -> dict[str, str]:
         if CAPTION.match(line):
             continue  # drop caption lines
         if _looks_like_heading(line):
-            current = re.sub(r"^[\d\.\)IVXLC\s]+", "", line.strip()).strip().lower()
+            current = _strip_numbering(line).lower()
             sections.setdefault(current, [])
             continue
         cleaned = _clean_line(line)

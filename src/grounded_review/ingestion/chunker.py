@@ -5,6 +5,15 @@ from .models import Chunk
 
 _encoder = tiktoken.get_encoding("cl100k_base")
 
+# Sections excluded from the index.
+#   preamble — title block and author list; matches queries lexically via the
+#              title while carrying no evidence, so it crowds out real content.
+#   abstract — already stored on PaperMetadata; indexing it creates a chunk
+#              that competes with the body text it summarises.
+SKIP_SECTIONS = {"preamble", "abstract"}
+
+MIN_CHUNK_TOKENS = 32
+
 
 def count_tokens(text: str) -> int:
     return len(_encoder.encode(text))
@@ -51,6 +60,9 @@ def chunk_sections(arxiv_id: str, sections: dict[str, str]) -> list[Chunk]:
     index = 0
 
     for section_name, text in sections.items():
+        if section_name in SKIP_SECTIONS:
+            continue
+
         pieces = (
             [text]
             if count_tokens(text) <= settings.chunk_size_tokens
@@ -59,7 +71,7 @@ def chunk_sections(arxiv_id: str, sections: dict[str, str]) -> list[Chunk]:
             )
         )
         for piece in pieces:
-            if count_tokens(piece) < 32:
+            if count_tokens(piece) < MIN_CHUNK_TOKENS:
                 continue  # too small to be useful in retrieval
             chunks.append(
                 Chunk(
