@@ -35,7 +35,7 @@ class SchedulerPlan(BaseModel):
 def scheduler_node(state: ReviewState) -> dict:
     llm = with_backoff(get_llm("strong").with_structured_output(SchedulerPlan))
     human = f"Review topic: {state.topic}\nPapers in scope (arXiv IDs): {', '.join(state.arxiv_ids)}"
-    result = llm.invoke([SystemMessage(content=SCHEDULER_SYSTEM_PROMPT), HumanMessage(content=human)])
+    result = llm.invoke([SystemMessage(content=SCHEDULER_SYSTEM_PROMPT), HumanMessage(content=human)], config={"tags": ["tier:strong"]})
     return {"plan": result.sub_topics}
 
 
@@ -49,7 +49,7 @@ def research_node(state: ReviewState) -> dict:
                 SystemMessage(content=RESEARCH_SYSTEM_PROMPT),
                 HumanMessage(content=f"Sub-topic: {sub_topic}\n\nPassage:\n{chunk['text']}"),
             ]
-            summary = cheap_llm.invoke(prompt).content
+            summary = cheap_llm.invoke(prompt, config={"tags": ["tier:strong"]}).content
             notes.append(
                 ResearchNote(
                     chunk_id=chunk["chunk_id"],
@@ -88,7 +88,7 @@ def writer_node(state: ReviewState) -> dict:
         plan_text = "\n".join(f"- {t}" for t in state.plan)
         human = f"Plan:\n{plan_text}\n\nResearch notes:\n{format_research_notes(state.research_notes)}"
 
-    result = llm.invoke([SystemMessage(content=WRITER_SYSTEM_PROMPT), HumanMessage(content=human)])
+    result = llm.invoke([SystemMessage(content=WRITER_SYSTEM_PROMPT), HumanMessage(content=human)], config={"tags": ["tier:strong"]})
     return {"draft": result.content}
 
 
@@ -96,7 +96,7 @@ def reviewer_node(state: ReviewState) -> dict:
     llm = with_backoff(get_llm("strong").with_structured_output(Critique))
     plan_text = "\n".join(f"- {t}" for t in state.plan)
     human = f"Plan:\n{plan_text}\n\nDraft:\n{state.draft}"
-    critique = llm.invoke([SystemMessage(content=REVIEWER_SYSTEM_PROMPT), HumanMessage(content=human)])
+    critique = llm.invoke([SystemMessage(content=REVIEWER_SYSTEM_PROMPT), HumanMessage(content=human)], config={"tags": ["tier:strong"]})
 
     update: dict = {"critique": critique}
     if not critique.approved:

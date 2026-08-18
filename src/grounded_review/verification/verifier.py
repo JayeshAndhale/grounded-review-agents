@@ -103,7 +103,10 @@ def verify_claim(claim_text: str, chunk_id: str, chunk_text: str | None) -> Clai
 
     llm = with_backoff(get_llm("strong").with_structured_output(VerdictOutput))
     human = f"Claim:\n{claim_text}\n\nSource text:\n{chunk_text}"
-    result = llm.invoke([SystemMessage(content=VERIFIER_SYSTEM_PROMPT), HumanMessage(content=human)])
+    result = llm.invoke(
+        [SystemMessage(content=VERIFIER_SYSTEM_PROMPT), HumanMessage(content=human)],
+        config={"tags": ["tier:strong"]},
+    )
     return ClaimVerdict(
         claim_text=claim_text,
         chunk_id=chunk_id,
