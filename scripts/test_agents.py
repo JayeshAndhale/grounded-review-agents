@@ -1,4 +1,4 @@
-"""End-to-end smoke test for the Phase 3 agent graph.
+"""End-to-end smoke test for the Phase 3+4 agent graph.
 
 Not a unit test - makes real Groq calls against two already-ingested papers
 (DS-1000, BigCodeBench) and inspects the result structurally. LLM output is
@@ -6,7 +6,7 @@ non-deterministic, so this checks shape (did each stage produce what the
 next stage needs), not exact content.
 """
 
-import re
+from collections import Counter
 
 from rich.console import Console
 from rich.panel import Panel
@@ -41,20 +41,35 @@ def main():
     console.rule("Draft")
     console.print(result.draft)
 
-    console.rule("Grounding sanity check (existence only, not Phase 4's semantic check)")
-    known_chunk_ids = {n.chunk_id for n in result.research_notes}
-    cited_ids = set(re.findall(r"\[\[([^\]]+)\]\]", result.draft))
-    unknown = cited_ids - known_chunk_ids
-    console.print(f"Citations in draft: {len(cited_ids)}")
-    console.print(f"Unknown chunk_ids (writer fabricated an ID): {len(unknown)}")
-    if unknown:
-        console.print(f"[red]{unknown}[/red]")
-
-    console.rule("Reviewer")
+    console.rule("Reviewer (coherence)")
     console.print(f"Approved: {result.critique.approved if result.critique else 'N/A'}")
     console.print(f"Revision count: {result.revision_count}")
     if result.critique:
         console.print(f"Feedback: {result.critique.feedback}")
+
+    console.rule("Verifier (grounding)")
+    console.print(f"Verification revision count: {result.verification_revision_count}")
+    if result.verification_results:
+        counts = Counter(v.verdict for v in result.verification_results)
+        console.print(
+            f"{len(result.verification_results)} claims checked - "
+            f"supported: {counts['supported']}, "
+            f"partially_supported: {counts['partially_supported']}, "
+            f"unsupported: {counts['unsupported']}"
+        )
+        unresolved = [v for v in result.verification_results if v.verdict != "supported"]
+        if unresolved:
+            console.print("[yellow]Claims that did not pass:[/yellow]")
+            for v in unresolved:
+                console.print(f"  [{v.verdict}] \"{v.claim_text}\" ({v.chunk_id})")
+                console.print(f"    -> {v.explanation}")
+    else:
+        console.print("[red]No cited claims found - draft may be entirely uncited.[/red]")
+
+    console.rule("Coverage flags (informational only - does not gate the loop)")
+    console.print(f"{len(result.coverage_flags)} factual-looking sentences with no citation marker")
+    for flag in result.coverage_flags:
+        console.print(f"  - {flag}")
 
 
 if __name__ == "__main__":

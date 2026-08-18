@@ -112,6 +112,18 @@ class PaperStore:
             )
         return retrieved
 
+    def get_chunks(self, chunk_ids: list[str]) -> dict[str, str]:
+        """Exact-ID lookup of chunk text, for verification against the
+        original source rather than a research-note summary.
+
+        Batches into one Chroma call rather than looping - a single
+        verifier pass may need a dozen-plus chunks' text at once.
+        """
+        if not chunk_ids:
+            return {}
+        results = self._collection.get(ids=chunk_ids)
+        return dict(zip(results["ids"], results["documents"]))
+
     def has_paper(self, arxiv_id: str) -> bool:
         return bool(self._collection.get(where={"arxiv_id": arxiv_id}, limit=1)["ids"])
 

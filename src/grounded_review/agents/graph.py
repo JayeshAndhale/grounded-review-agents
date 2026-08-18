@@ -1,5 +1,11 @@
-"""The four-node LangGraph pipeline: scheduler -> research -> writer ->
-reviewer -> (writer, capped) -> end.
+"""The five-node LangGraph pipeline:
+scheduler -> research -> writer -> reviewer -> verifier -> end,
+with two independently-capped loops back to the writer:
+  - reviewer rejects (coherence)  -> writer -> reviewer again
+  - verifier rejects (grounding)  -> writer -> verifier again (skips reviewer)
+A coherent draft only reaches the verifier once; grounding revisions never
+re-trigger a coherence check, since the coherence question was already
+settled - see state.next_check.
 """
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -16,6 +22,7 @@ from grounded_review.agents.prompts import (
 from grounded_review.agents.state import Critique, ResearchNote, ReviewState
 from grounded_review.agents.tools import search_papers
 from grounded_review.config import get_llm, get_settings, with_backoff
+from grounded_review.verification.verifier import all_claims_supported, verifier_node
 
 
 class SchedulerPlan(BaseModel):
@@ -55,8 +62,24 @@ def research_node(state: ReviewState) -> dict:
 
 
 def writer_node(state: ReviewState) -> dict:
+    """Handles three cases: first draft, reviewer-rejected revision, and
+    verifier-rejected revision - distinguished by which critique is 'live'
+    given next_check, since both critique and verification_results can be
+    populated at once (reviewer approved, then verifier ran and rejected)."""
     llm = with_backoff(get_llm("strong"))
-    if state.critique is not None and not state.critique.approved:
+
+    if state.next_check == "verifier" and state.verification_results:
+        problems = "\n".join(
+            f"- \"{v.claim_text}\" ({v.verdict}): {v.explanation}"
+            for v in state.verification_results
+            if v.verdict != "supported"
+        )
+        human = (
+            f"Previous draft:\n{state.draft}\n\n"
+            f"The following cited claims failed grounding verification - "
+            f"reword or remove them so every claim is actually supported by its cited source:\n{problems}"
+        )
+    elif state.critique is not None and not state.critique.approved:
         human = (
             f"Previous draft:\n{state.draft}\n\n"
             f"Reviewer feedback - address this directly:\n{state.critique.feedback}"
@@ -64,6 +87,7 @@ def writer_node(state: ReviewState) -> dict:
     else:
         plan_text = "\n".join(f"- {t}" for t in state.plan)
         human = f"Plan:\n{plan_text}\n\nResearch notes:\n{format_research_notes(state.research_notes)}"
+
     result = llm.invoke([SystemMessage(content=WRITER_SYSTEM_PROMPT), HumanMessage(content=human)])
     return {"draft": result.content}
 
@@ -80,12 +104,34 @@ def reviewer_node(state: ReviewState) -> dict:
     return update
 
 
+def route_after_writer(state: ReviewState) -> str:
+    """Every writer revision returns to whichever check sent it back -
+    reviewer by default (first pass, or a reviewer rejection), verifier
+    only when a grounding failure triggered the revision."""
+    return state.next_check
+
+
 def route_after_review(state: ReviewState) -> str:
-    """Loop back to the writer unless approved, or the revision cap is hit."""
+    """Coherence gate. Approved drafts move on to grounding checks;
+    rejected drafts loop to the writer until approved or capped - a
+    coherence-capped draft ships unapproved and skips verification
+    entirely, since there's no point grounding-checking a draft that's
+    about to be restructured anyway.
+    """
     settings = get_settings()
     if state.critique and state.critique.approved:
-        return END
+        return "verifier"
     if state.revision_count >= settings.max_revision_loops:
+        return END
+    return "writer"
+
+
+def route_after_verification(state: ReviewState) -> str:
+    """Grounding gate, independent cap from the reviewer's loop."""
+    settings = get_settings()
+    if all_claims_supported(state.verification_results):
+        return END
+    if state.verification_revision_count >= settings.max_revision_loops:
         return END
     return "writer"
 
@@ -96,11 +142,20 @@ def build_graph():
     builder.add_node("research", research_node)
     builder.add_node("writer", writer_node)
     builder.add_node("reviewer", reviewer_node)
+    builder.add_node("verifier", verifier_node)
 
     builder.add_edge(START, "scheduler")
     builder.add_edge("scheduler", "research")
     builder.add_edge("research", "writer")
-    builder.add_edge("writer", "reviewer")
-    builder.add_conditional_edges("reviewer", route_after_review, {"writer": "writer", END: END})
+
+    builder.add_conditional_edges(
+        "writer", route_after_writer, {"reviewer": "reviewer", "verifier": "verifier"}
+    )
+    builder.add_conditional_edges(
+        "reviewer", route_after_review, {"writer": "writer", "verifier": "verifier", END: END}
+    )
+    builder.add_conditional_edges(
+        "verifier", route_after_verification, {"writer": "writer", END: END}
+    )
 
     return builder.compile()

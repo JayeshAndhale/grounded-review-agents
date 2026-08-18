@@ -7,6 +7,8 @@ malformed data fails at the model boundary immediately, instead of silently
 corrupting state that a node three hops downstream trusts blindly.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -35,6 +37,22 @@ class Critique(BaseModel):
     feedback: str
 
 
+class ClaimVerdict(BaseModel):
+    """One grounding verdict, checked against the chunk's original text
+    (not the research-note summary, which is itself a paraphrase one step
+    removed from the source).
+
+    Three-way verdict rather than binary: 'partially_supported' captures
+    claims that add specifics — a number, a generalisation — the source
+    chunk doesn't actually give, which a binary pass/fail would hide.
+    """
+
+    claim_text: str
+    chunk_id: str
+    verdict: Literal["supported", "partially_supported", "unsupported"]
+    explanation: str = Field(description="What the chunk does or doesn't say, relative to the claim")
+
+
 class ReviewState(BaseModel):
     """The single object passed between every node in the graph."""
 
@@ -51,8 +69,17 @@ class ReviewState(BaseModel):
     # --- writer writes this: prose with inline [[chunk_id]] citation markers ---
     draft: str = ""
 
-    # --- reviewer writes this ---
+    # --- reviewer writes this (coherence/completeness only) ---
     critique: Critique | None = None
-
-    # --- loop control, checked against settings.max_revision_loops in graph.py ---
     revision_count: int = 0
+
+    # --- verifier writes this (grounding accuracy only) ---
+    verification_results: list[ClaimVerdict] = Field(default_factory=list)
+    coverage_flags: list[str] = Field(
+        default_factory=list,
+        description="Factual-looking sentences with no [[chunk_id]] marker - informational, does not gate the loop", 
+    )
+    verification_revision_count: int = 0
+
+    # --- routing: which check sent the draft back to the writer ---
+    next_check: Literal["reviewer", "verifier"] = "reviewer"
