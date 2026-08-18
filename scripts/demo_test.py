@@ -1,7 +1,12 @@
-# scratch, not part of the repo - just to confirm the key and model work
-from grounded_review.config import get_llm
+# scratch_check_survey.py
+from grounded_review.ingestion.arxiv_client import fetch_metadata, download_pdf
+from grounded_review.ingestion.pdf_parser import extract_sections
 
-llm = get_llm("strong")
-response = llm.invoke("Say hello in one sentence.")
-print(response.content)
-print(response.usage_metadata)  # confirm token usage is populated the same shape as Groq's
+meta = fetch_metadata("2202.03629")
+pdf_path = download_pdf(meta)
+sections = extract_sections(pdf_path)
+
+for name, text in sections.items():
+    print(f"--- {name} ({len(text)} chars) ---")
+    print(text[:150])
+    print()

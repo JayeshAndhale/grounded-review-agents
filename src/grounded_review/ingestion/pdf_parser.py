@@ -19,6 +19,13 @@ SECTION_HEADING = re.compile(
 # Lines that are figure/table captions, which pollute retrieval.
 CAPTION = re.compile(r"^\s*(fig(?:ure)?|table|algorithm)\.?\s*\d+", re.IGNORECASE)
 
+# Page furniture: running headers, footnote URLs, bare page numbers.
+FURNITURE = re.compile(
+    r"^\s*(?:\d+\s*)?(?:published as a conference paper|preprint|under review|"
+    r"proceedings of|arxiv:|https?://|\d+\s*$)",
+    re.IGNORECASE,
+)
+
 # Canonical section names we try to snap headings onto.
 KNOWN_SECTIONS = {
     "abstract", "introduction", "background", "related work", "motivation",
@@ -27,6 +34,8 @@ KNOWN_SECTIONS = {
     "analysis", "discussion", "ablation", "limitations",
     "conclusion", "conclusions", "future work",
 }
+
+NUMBER_TOKEN = re.compile(r"\b\d+(?:\.\d+)*\b")
 
 
 class PDFParseError(Exception):
@@ -62,32 +71,33 @@ def _clean_line(line: str) -> str:
     """Collapse whitespace on a single line."""
     return re.sub(r"\s+", " ", line).strip()
 
+def _looks_like_toc_noise(line: str) -> bool:
+    return len(NUMBER_TOKEN.findall(line)) >= 4
 
 def extract_sections(pdf_path: Path) -> dict[str, str]:
-    """Parse a paper PDF into {section_name: text}, dropping references
-    and figure captions.
-
-    Raises PDFParseError if the PDF yields no substantial body text.
-    """
     with pymupdf.open(pdf_path) as doc:
         raw = "\n".join(page.get_text("text") for page in doc)
 
     if not raw.strip():
         raise PDFParseError(f"No extractable text in {pdf_path} — likely a scanned PDF")
 
-    # Repair words split by end-of-line hyphenation before splitting on newlines.
     raw = re.sub(r"-\n(\w)", r"\1", raw)
 
     sections: dict[str, list[str]] = {"preamble": []}
     current = "preamble"
+    seen_known_section = False  # NEW: guards against a ToC-page false END_MARKERS hit
 
     for line in raw.split("\n"):
-        if END_MARKERS.match(line):
-            break  # everything from here is references — discard
-        if CAPTION.match(line):
-            continue  # drop caption lines
+        if _looks_like_toc_noise(line):
+            continue
+        if END_MARKERS.match(line) and seen_known_section:
+            break
+        if CAPTION.match(line) or FURNITURE.match(line):
+            continue
         if _looks_like_heading(line):
             current = _strip_numbering(line).lower()
+            if current in KNOWN_SECTIONS:
+                seen_known_section = True
             sections.setdefault(current, [])
             continue
         cleaned = _clean_line(line)
@@ -97,7 +107,7 @@ def extract_sections(pdf_path: Path) -> dict[str, str]:
     merged = {
         name: " ".join(lines)
         for name, lines in sections.items()
-        if len(" ".join(lines)) > 200  # drop fragments and stray headings
+        if len(" ".join(lines)) > 200
     }
 
     if not merged:
