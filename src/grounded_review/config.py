@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # passed through unmodified. Strong tier moved to Cerebras after
     # hitting Groq's daily TPD ceiling on openai/gpt-oss-120b during
     # Phase 5 testing - same model weights, different inference backend.
-    llm_model: str = "cerebras/gpt-oss-120b"
+    llm_model: str = "groq/openai/gpt-oss-120b"
     llm_model_cheap: str = "groq/openai/gpt-oss-20b"
 
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"

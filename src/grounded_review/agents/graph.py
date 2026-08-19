@@ -49,7 +49,7 @@ def research_node(state: ReviewState) -> dict:
                 SystemMessage(content=RESEARCH_SYSTEM_PROMPT),
                 HumanMessage(content=f"Sub-topic: {sub_topic}\n\nPassage:\n{chunk['text']}"),
             ]
-            summary = cheap_llm.invoke(prompt, config={"tags": ["tier:strong"]}).content
+            summary = cheap_llm.invoke(prompt, config={"tags": ["tier:cheap"]}).content
             notes.append(
                 ResearchNote(
                     chunk_id=chunk["chunk_id"],
